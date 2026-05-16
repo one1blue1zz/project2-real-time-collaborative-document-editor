@@ -4,7 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration
+class CreateDocumentsTable extends Migration
 {
     /**
      * Run the migrations.
@@ -13,10 +13,10 @@ return new class extends Migration
     {
         Schema::create('documents', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('user_id') ->constrainded()->onDelete('cascade');
-            $table->string('tittle');
-            $table->longText('content')->nullable();  
-            $table->boolean('is_Locked')->default(false);       
+            $table->string('title');
+            $table->longText('content')->nullable();
+            $table->string('locked_by')->nullable();
+            $table->timestamp('locked_at')->nullable();
             $table->timestamps();
         });
     }
@@ -28,4 +28,4 @@ return new class extends Migration
     {
         Schema::dropIfExists('documents');
     }
-};
+}
