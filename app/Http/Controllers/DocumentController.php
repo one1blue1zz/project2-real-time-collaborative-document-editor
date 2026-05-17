@@ -46,9 +46,9 @@ class DocumentController extends Controller
         DocumentVersion::create([
             'document_id' => $document->id,
             'content' => $document->content,
-            'version' => 1,
-            'user_id' => session()->getId(),
-            'user_name' => 'User_' . substr(session()->getId(), 0, 8),
+            'version' => $document->current_version,
+            'user_id' => Auth::id(),
+            'user_name' => 'User_' . substr((string) Auth::id(), 0, 8),
             'changes' => ['action' => 'created']
         ]);
 
@@ -101,7 +101,7 @@ class DocumentController extends Controller
         DocumentVersion::create([
             'document_id' => $document->id,
             'content' => $request->content,
-            'version' => $document->current_version,
+            'version' => $document->version,
             'user_id' => session()->getId(),
             'user_name' => 'User_' . substr(session()->getId(), 0, 8),
             'changes' => $this->computeChanges($oldContent, $request->content)
@@ -127,7 +127,7 @@ class DocumentController extends Controller
         return view('documents.history', compact('document', 'versions'));
     }
 
-    public function restoreVersion(Document $document, $version)
+    public function restoreVersion(Document $document, int $version)
     {
         $versionRecord = $document->versions()->where('version', $version)->firstOrFail();
 
@@ -149,7 +149,7 @@ class DocumentController extends Controller
             ->with('success', "Restored to version ($version)");
     }
 
-    private function computeChanges($old, $new)
+    private function computeChanges(?string $old, ?string $new)
     {
         if ($old === $new) return ['action' => 'no_changes'];
 
