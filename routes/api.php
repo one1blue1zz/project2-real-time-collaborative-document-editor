@@ -9,7 +9,7 @@ use App\Events\LockReleased;
 
 Route::post('/documents/{document}/cursor', function ($documentId, Request $request) {
     $document = Document::findOrFail($documentId);
-    broadcast(new CursorMoved($documentId, $request->userId, $request->position));
+    broadcast(new CursorMoved($documentId, $request->userId, $request->position, $request->session()->getId()))->toOthers();
     return response()->json(['success' => true]);
 });
 
@@ -35,3 +35,4 @@ Route::post('/documents/{document}/release-lock', function ($documentId, Request
     broadcast(new LockReleased($documentId, $request->session()->getId()));
     return response()->json(['success' => true]);
 });
+

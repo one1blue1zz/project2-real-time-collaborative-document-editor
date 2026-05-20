@@ -21,12 +21,12 @@
         <hr>
         
         <div style="margin: 10px 0; padding: 10px; border: 1px solid #ccc; background: #f9f9f9;">
-            <h3 style="margin: 0 0 5px 0;">👥 Active Users (Live Cursors):</h3>
+            <h3 style="margin: 0 0 5px 0;">👥 Active Users (<span id="userCount">1</span>):</h3>
             <ul id="activeUsersList" style="margin: 0;">
                 <li>You (<span id="currentUserName">Loading...</span>)</li>
             </ul>
         </div>
-        
+               
         <div>
             <label><strong>Document Content:</strong></label><br>
             <textarea id="editor" rows="25" cols="100" style="width: 100%; padding: 10px; font-family: monospace; border: 1px solid #ccc;">{{ $document->content ?? '' }}</textarea>
@@ -52,6 +52,11 @@
     </script>
 
     <script>
+        const textareaEditor = document.getElementById('editor');
+        textareaEditor.addEventListener('keyup',
+        ()=>{
+            console.log("Posisi cursor:", textareaEditor.selectionStart);
+        });
         // ========== KONFIGURASI ==========
         const docId = window.docId;
         let currentVersion = window.docVersion;
@@ -70,8 +75,156 @@
         let lastSavedContent = document.getElementById('editor').value;
         let autoSaveTimer = null;
         
-        // Active users
-        let activeUsers = [userName];
+        // Active users dengan struktur yang lebih lengkap
+        let activeUsers = [{
+            id: userId,
+            name: userName,
+            cursorPosition: 0
+        }];
+        
+        // Global activity array to store all activities
+        let allActivities = [];
+        
+        // Track user heartbeats
+        let userHeartbeats = {};
+        
+        // ========== FUNGSI ACTIVITY LOG ==========
+        
+        // Load activities from localStorage
+        function loadActivities() {
+            const saved = localStorage.getItem(`doc_${docId}_activities`);
+            if (saved) {
+                allActivities = JSON.parse(saved);
+                renderActivities();
+            }
+        }
+        
+        // Save activities to localStorage
+        function saveActivities() {
+            // Keep only last 100 activities
+            if (allActivities.length > 100) {
+                allActivities = allActivities.slice(-100);
+            }
+            localStorage.setItem(`doc_${docId}_activities`, JSON.stringify(allActivities));
+        }
+        
+        // Get icon based on activity type
+        function getActivityIcon(type) {
+            const icons = {
+                'edit': '✏️',
+                'save': '💾',
+                'cursor': '🖱️',
+                'info': 'ℹ️',
+                'conflict': '⚠️',
+                'delete': '🗑️',
+                'join': '👤',
+                'leave': '👋'
+            };
+            return icons[type] || '📝';
+        }
+        
+        // Render all activities
+        function renderActivities() {
+            var logDiv = document.getElementById('conflictLog');
+            logDiv.innerHTML = '';
+            
+            allActivities.forEach(function(activity) {
+                var div = document.createElement('div');
+                var icon = getActivityIcon(activity.type);
+                var isCurrentUser = activity.userId === userId;
+                var userNameDisplay = isCurrentUser ? `${activity.userName} (You)` : activity.userName;
+                
+                div.innerHTML = '<small>[' + activity.timestamp + ']</small> <strong>' + icon + '</strong> <span style="' + (!isCurrentUser ? 'color: #0066cc;' : '') + '">' + userNameDisplay + '</span>: ' + activity.message;
+                logDiv.appendChild(div);
+            });
+            
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        // Enhanced addLogMessage to store activities
+        function addLogMessage(message, type, userId_sender, userName_sender) {
+            type = type || 'edit';
+            const activityUserId = userId_sender || userId;
+            const activityUserName = userName_sender || userName;
+            
+            const activity = {
+                message: message,
+                type: type,
+                userId: activityUserId,
+                userName: activityUserName,
+                timestamp: new Date().toLocaleTimeString(),
+                fullTimestamp: new Date().toISOString()
+            };
+            
+            allActivities.push(activity);
+            saveActivities();
+            renderActivities();
+        }
+        
+        // ========== FUNGSI ACTIVE USERS ==========
+        
+        function updateActiveUsersUI() {
+            var list = document.getElementById('activeUsersList');
+            list.innerHTML = '';
+            
+            activeUsers.forEach(function(user) {
+                var li = document.createElement('li');
+                var isCurrentUser = (user.id === userId);
+                var displayName = isCurrentUser ? user.name + ' (You)' : user.name;
+                
+                li.textContent = displayName;
+                if (!isCurrentUser) {
+                    li.style.color = '#0066cc';
+                    li.style.fontWeight = 'bold';
+                    li.style.marginBottom = '5px';
+                } else {
+                    li.style.fontWeight = 'bold';
+                    li.style.marginBottom = '5px';
+                }
+                
+                // Add cursor position indicator if available
+                if (user.cursorPosition && !isCurrentUser && user.cursorPosition > 0) {
+                    var posSpan = document.createElement('span');
+                    posSpan.style.fontSize = '11px';
+                    posSpan.style.color = '#666';
+                    posSpan.style.marginLeft = '10px';
+                    posSpan.textContent = '(pos: ' + user.cursorPosition + ')';
+                    li.appendChild(posSpan);
+                }
+                
+                list.appendChild(li);
+            });
+            
+            // Update user count
+            document.getElementById('userCount').innerText = activeUsers.length;
+        }
+        
+        // Save active users to localStorage
+        function saveActiveUsers() {
+            localStorage.setItem(`doc_${docId}_active_users`, JSON.stringify(activeUsers));
+        }
+        
+        // Load active users from localStorage
+        function loadActiveUsers() {
+            const saved = localStorage.getItem(`doc_${docId}_active_users`);
+            if (saved) {
+                activeUsers = JSON.parse(saved);
+                // Make sure current user is in the list
+                if (!activeUsers.some(u => u.id === userId)) {
+                    activeUsers.push({
+                        id: userId,
+                        name: userName,
+                        cursorPosition: 0
+                    });
+                }
+                updateActiveUsersUI();
+            }
+        }
+        
+        // Update user heartbeat
+        function updateUserHeartbeat(senderUserId) {
+            userHeartbeats[senderUserId] = Date.now();
+        }
         
         // ========== WEBSOCKET (LARAVEL ECHO) ==========
         let echo = null;
@@ -88,55 +241,73 @@
                     const editor = document.getElementById('editor');
                     const cursorPos = editor.selectionStart;
                     
-                    editor.value = event.content;
-                    lastSavedContent = event.content;
+                    if (event.userId !== userId) {
+                        editor.value = event.content;
+                        lastSavedContent = event.content;
+                        addLogMessage('Updated document content (Version ' + event.version + ')', 'edit', event.userId, event.userName);
+                    } else {
+                        addLogMessage('Saved version ' + event.version, 'save', event.userId, event.userName);
+                    }
                     
                     if (event.version) {
                         currentVersion = event.version;
                         document.getElementById('versionNumber').innerText = currentVersion;
                     }
                     
-                    addLogMessage(`${event.userName} updated document content (Version ${event.version})`, 'edit');
                     editor.setSelectionRange(cursorPos, cursorPos);
                 });
                 
                 channel.listen('.cursor.moved', (event) => {
+                    console.log('Terima event cursor:', event);
                     if (event.userId !== userId) {
-                        addLogMessage(`🖱️ ${event.userName} cursor at position ${event.position}`, 'cursor');
+                        addLogMessage('Moved cursor to position ' + event.position, 'cursor', event.userId, event.userName);
+                        
+                        // Update cursor position in active users
+                        const userIndex = activeUsers.findIndex(u => u.id === event.userId);
+                        if (userIndex !== -1) {
+                            activeUsers[userIndex].cursorPosition = event.position;
+                            updateActiveUsersUI();
+                            saveActiveUsers();
+                        }
                     }
                 });
                 
                 channel.listen('.user.presence', (event) => {
                     console.log('User presence:', event);
                     
-                    if (event.action === 'join' && event.userName !== userName) {
-                        if (!activeUsers.includes(event.userName)) {
-                            activeUsers.push(event.userName);
+                    if (event.action === 'join') {
+                        if (!activeUsers.some(u => u.id === event.userId)) {
+                            activeUsers.push({
+                                id: event.userId,
+                                name: event.userName,
+                                cursorPosition: 0
+                            });
                             updateActiveUsersUI();
-                            addLogMessage(`${event.userName} joined the document`, 'info');
-                            
-                            // Simpan ke daftar semua user
-                            let allUsers = JSON.parse(localStorage.getItem(`doc_${docId}_all_users`) || '[]');
-                            if (!allUsers.includes(event.userName)) {
-                                allUsers.push(event.userName);
-                                localStorage.setItem(`doc_${docId}_all_users`, JSON.stringify(allUsers));
-                            }
+                            addLogMessage('Joined the document', 'join', event.userId, event.userName);
+                            saveActiveUsers();
                         }
-                    } else if (event.action === 'leave' && event.userName !== userName) {
-                        activeUsers = activeUsers.filter(function(u) { return u !== event.userName; });
-                        updateActiveUsersUI();
-                        addLogMessage(`${event.userName} left the document`, 'info');
+                    } else if (event.action === 'leave') {
+                        const leavingUser = activeUsers.find(u => u.id === event.userId);
+                        if (leavingUser && leavingUser.id !== userId) {
+                            activeUsers = activeUsers.filter(u => u.id !== event.userId);
+                            updateActiveUsersUI();
+                            addLogMessage('Left the document', 'leave', event.userId, event.userName);
+                            saveActiveUsers();
+                        }
+                    } else if (event.action === 'heartbeat') {
+                        updateUserHeartbeat(event.userId);
                     }
                 });
                 
                 broadcastPresence('join');
-                addLogMessage('✅ WebSocket connected!', 'info');
+                addLogMessage('✅ WebSocket connected!', 'info', userId, userName);
             } else {
                 setTimeout(initWebSocket, 1000);
             }
         }
         
         function broadcastCursor(position) {
+            console.log('Mengirim cursor', position);
             if (channel) {
                 axios.post('/broadcast/cursor', {
                     documentId: docId, userId: userId, userName: userName, position: position
@@ -149,11 +320,6 @@
                 axios.post('/broadcast/presence', {
                     documentId: docId, userId: userId, userName: userName, action: action
                 }).catch(function(err) { console.error('Presence error:', err); });
-            }
-            
-            // Update daftar user di localStorage
-            if (action === 'join') {
-                setTimeout(updateAllUsersList, 500);
             }
         }
         
@@ -175,11 +341,11 @@
                 if (otherUsers.length > 0) {
                     // Pilih random user lain
                     let conflictUser = otherUsers[Math.floor(Math.random() * otherUsers.length)];
-                    addLogMessage(`⚠️ CONFLICT DETECTED: ${conflictUser} might have edited the same area!`, 'conflict');
-                    console.log(`[CONFLICT] ${userName} detected conflict from: ${conflictUser}`);
+                    addLogMessage('⚠️ CONFLICT DETECTED: ' + conflictUser + ' might have edited the same area!', 'conflict', 'system', 'System');
+                    console.log('[CONFLICT] ' + userName + ' detected conflict from: ' + conflictUser);
                 } else {
                     // Jika belum ada user lain, gunakan pesan generic
-                    addLogMessage(`⚠️ CONFLICT DETECTED: Another user might have edited the same area!`, 'conflict');
+                    addLogMessage('⚠️ CONFLICT DETECTED: Another user might have edited the same area!', 'conflict', 'system', 'System');
                 }
             }, 15000);
         }
@@ -203,57 +369,14 @@
             
             // Tambahkan semua active users
             activeUsers.forEach(function(u) {
-                if (!allUsers.includes(u)) {
-                    allUsers.push(u);
+                if (!allUsers.includes(u.name)) {
+                    allUsers.push(u.name);
                     localStorage.setItem(`doc_${docId}_all_users`, JSON.stringify(allUsers));
                 }
             });
         }
         
-        // Hapus user dari daftar (opsional)
-        function removeUserFromList(userToRemove) {
-            let allUsers = JSON.parse(localStorage.getItem(`doc_${docId}_all_users`) || '[]');
-            allUsers = allUsers.filter(function(u) { return u !== userToRemove; });
-            localStorage.setItem(`doc_${docId}_all_users`, JSON.stringify(allUsers));
-        }
-        
         // ========== FUNGSI UTAMA ==========
-        
-        function updateActiveUsersUI() {
-            var list = document.getElementById('activeUsersList');
-            list.innerHTML = '';
-            activeUsers.forEach(function(name) {
-                var li = document.createElement('li');
-                var isCurrentUser = (name === userName);
-                var displayName = isCurrentUser ? name + ' (You)' : name;
-                li.textContent = displayName;
-                if (!isCurrentUser) {
-                    li.style.color = '#0066cc';
-                    li.style.fontWeight = 'bold';
-                }
-                list.appendChild(li);
-            });
-        }
-        
-        function addLogMessage(message, type) {
-            type = type || 'edit';
-            var logDiv = document.getElementById('conflictLog');
-            var timestamp = new Date().toLocaleTimeString();
-            var icon = '✏️';
-            if (type === 'conflict') icon = '⚠️';
-            if (type === 'cursor') icon = '🖱️';
-            if (type === 'info') icon = 'ℹ️';
-            if (type === 'save') icon = '💾';
-            
-            var div = document.createElement('div');
-            div.innerHTML = '<small>[' + timestamp + ']</small> <strong>' + icon + '</strong> ' + message;
-            logDiv.appendChild(div);
-            logDiv.scrollTop = logDiv.scrollHeight;
-            
-            while (logDiv.children.length > 50) {
-                logDiv.removeChild(logDiv.firstChild);
-            }
-        }
         
         async function saveVersion(content, isManual) {
             isManual = isManual || false;
@@ -271,11 +394,11 @@
                 if (data.success) {
                     currentVersion = data.version;
                     document.getElementById('versionNumber').innerText = currentVersion;
-                    addLogMessage('💾 Version ' + currentVersion + ' saved by ' + userName + (isManual ? ' (manual)' : ' (auto-save)'), 'save');
+                    // Don't add log here because it will be added from broadcast
                     return true;
                 }
             } catch (error) {
-                addLogMessage('❌ Failed to save: ' + error.message, 'conflict');
+                addLogMessage('❌ Failed to save: ' + error.message, 'conflict', userId, userName);
                 return false;
             }
         }
@@ -309,6 +432,28 @@
             }, 30000);
         }
         
+        // Check for inactive users every minute
+        setInterval(function() {
+            const now = Date.now();
+            let hasChanges = false;
+            
+            activeUsers = activeUsers.filter(function(user) {
+                const lastSeen = userHeartbeats[user.id] || now;
+                const isActive = (now - lastSeen) < 90000; // 90 seconds timeout
+                if (!isActive && user.id !== userId) {
+                    addLogMessage('Automatically removed due to inactivity', 'leave', user.id, user.name);
+                    hasChanges = true;
+                    return false;
+                }
+                return true;
+            });
+            
+            if (hasChanges) {
+                updateActiveUsersUI();
+                saveActiveUsers();
+            }
+        }, 60000);
+        
         // ========== EVENT LISTENERS ==========
         var editor = document.getElementById('editor');
         var lastContent = editor.value;
@@ -318,7 +463,7 @@
             var diff = newContent.length - lastContent.length;
             if (diff !== 0) {
                 var action = diff > 0 ? 'added ' + diff + ' chars' : 'removed ' + Math.abs(diff) + ' chars';
-                addLogMessage(userName + ' ' + action, 'edit');
+                addLogMessage(action, 'edit', userId, userName);
             }
             lastContent = newContent;
         });
@@ -334,13 +479,20 @@
         
         // ========== INITIALIZATION ==========
         function init() {
+            loadActivities();
+            loadActiveUsers();
             updateActiveUsersUI();
             startAutoSave();
             initWebSocket();
             updateAllUsersList();
-            startConflictSimulation();
-            addLogMessage(userName + ' joined the document', 'info');
-            addLogMessage('💡 Simulasi konflik akan muncul setiap 15 detik.', 'info');
+            //startConflictSimulation(); // Uncomment if needed
+            addLogMessage(userName + ' joined the document', 'info', userId, userName);
+            addLogMessage('💡 Simulasi konflik akan muncul setiap 15 detik.', 'info', 'system', 'System');
+            
+            // Send heartbeat periodically
+            setInterval(function() {
+                broadcastPresence('heartbeat');
+            }, 30000);
         }
         
         init();
