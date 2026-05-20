@@ -48,42 +48,80 @@ class DocumentController extends Controller
     {
         $document = Document::findOrFail($id);
         
+        $oldContent = $document->content;
+        $newContent = $request->content;
+        $userId = $request->userId ?? 'system';
+        $userName = $request->userName ?? 'System';
+        
+        // Simpan version history ke session - dengan pengecekan null
+        $versions = session()->get("doc_{$id}_versions", []);
+        
+        // Pastikan $versions adalah array
+        if (!is_array($versions)) {
+            $versions = [];
+        }
+        
+        $versions[] = [
+            'version' => $document->current_version + 1,
+            'content' => $newContent,
+            'user_id' => $userId,
+            'user_name' => $userName,
+            'created_at' => now()->toDateTimeString(),
+            'changes' => [
+                'old' => $oldContent,
+                'new' => $newContent
+            ]
+        ];
+        
+        session()->put("doc_{$id}_versions", $versions);
+        
+        // Update dokumen
         $document->update([
-            'content' => $request->content,
+            'content' => $newContent,
             'current_version' => $document->current_version + 1,
         ]);
 
         // Broadcast ke semua user yang sedang mengedit dokumen ini
         broadcast(new DocumentContentUpdate(
             $document->toArray(),
-            $request->content,
-            $request->userId,
-            $request->userName
+            $newContent,
+            $userId,
+            $userName,
+            $document->current_version
         ));
 
-        return response()->json(['success' => true, 'version' => $document->current_version]);
+        return response()->json([
+            'success' => true, 
+            'version' => $document->current_version
+        ]);
     }
 
     public function history(int $id)
     {
         $document = Document::findOrFail($id);
         
-        $versions = collect([]);
-        for ($i = 1; $i <= $document->current_version; $i++) {
-            $versions->push((object)[
-                'version' => $i,
-                'content' => $i == $document->current_version ? $document->content : 'Konten versi ' . $i,
-                'created_at' => $document->created_at,
-                'user_name' => 'System',
-            ]);
+        // Ambil version history dari session - dengan pengecekan null
+        $versions = session()->get("doc_{$id}_versions", []);
+        
+        // Pastikan $versions adalah array
+        if (!is_array($versions)) {
+            $versions = [];
         }
+        
+        // Balik urutan agar yang terbaru di atas
+        $versions = array_reverse($versions);
         
         return view('documents.history', compact('document', 'versions'));
     }
 
     public function destroy(int $id)
     {
-        Document::findOrFail($id)->delete();
+        $document = Document::findOrFail($id);
+        $document->delete();
+        
+        // Hapus juga session history
+        session()->forget("doc_{$id}_versions");
+        
         return redirect()->route('documents.index')->with('success', 'Dokumen berhasil dihapus!');
     }
 }

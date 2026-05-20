@@ -69,11 +69,9 @@
         
         let lastSavedContent = document.getElementById('editor').value;
         let autoSaveTimer = null;
-        let lastTypingTime = 0;  // Untuk deteksi konflik saat typing
         
         // Active users
         let activeUsers = [userName];
-        let pendingContentUpdate = null;  // Untuk menyimpan update saat konflik
         
         // ========== WEBSOCKET (LARAVEL ECHO) ==========
         let echo = null;
@@ -83,79 +81,31 @@
             if (typeof window.Echo !== 'undefined') {
                 echo = window.Echo;
                 
-                // Join channel untuk dokumen ini
                 channel = echo.channel('document.' + docId);
                 
-                // Listen untuk content update dengan CONFLICT DETECTION
                 channel.listen('.content.update', (event) => {
                     console.log('Content update received:', event);
-                    
-                    // Update editor content (tanpa mengubah cursor position)
                     const editor = document.getElementById('editor');
                     const cursorPos = editor.selectionStart;
-                    const currentContent = editor.value;
-                    const now = Date.now();
                     
-                    // DETEKSI KONFLIK: jika user sedang mengetik (dalam 2 detik terakhir)
-                    const isTyping = (now - lastTypingTime) < 2000;
+                    editor.value = event.content;
+                    lastSavedContent = event.content;
                     
-                    if (isTyping && event.userId !== userId) {
-                        // Konflik terdeteksi!
-                        addLogMessage(`⚠️ CONFLICT DETECTED: ${event.userName} edited while you were typing!`, 'conflict');
-                        
-                        // Simpan update untuk resolusi
-                        pendingContentUpdate = event;
-                        
-                        // Tampilkan notifikasi konflik
-                        const userChoice = confirm(
-                            `⚠️ KONFLIK TERDETEKSI! ⚠️\n\n` +
-                            `${event.userName} menyimpan perubahan pada dokumen yang sama.\n\n` +
-                            `Klik OK untuk mengambil perubahan terbaru (kehilangan perubahan Anda yang belum tersimpan).\n` +
-                            `Klik CANCEL untuk mempertahankan perubahan Anda (mengabaikan perubahan ${event.userName}).\n\n` +
-                            `⚠️ SARAN: Simpan pekerjaan Anda (Save as New Version) terlebih dahulu!`
-                        );
-                        
-                        if (userChoice) {
-                            // Ambil perubahan dari user lain
-                            editor.value = event.content;
-                            lastSavedContent = event.content;
-                            addLogMessage(`Conflict resolved: Applied ${event.userName}'s changes`, 'conflict');
-                            addLogMessage(`⚠️ Your unsaved changes may have been lost. Please redo your work.`, 'conflict');
-                        } else {
-                            // Pertahankan perubahan sendiri
-                            addLogMessage(`Conflict resolved: Kept your changes, ignored ${event.userName}'s changes`, 'conflict');
-                            addLogMessage(`⚠️ ${event.userName}'s changes have been discarded. They may need to redo their work.`, 'conflict');
-                        }
-                        
-                        pendingContentUpdate = null;
-                    } else if (event.userId !== userId) {
-                        // Update normal dari user lain (tidak konflik)
-                        editor.value = event.content;
-                        lastSavedContent = event.content;
-                        addLogMessage(`${event.userName} updated document content (auto-saved)`, 'edit');
-                    } else if (event.userId === userId) {
-                        // Update dari diri sendiri, abaikan
-                        addLogMessage(`Your changes were saved (Version ${currentVersion + 1})`, 'save');
-                    }
-                    
-                    // Update versi number
                     if (event.version) {
                         currentVersion = event.version;
                         document.getElementById('versionNumber').innerText = currentVersion;
                     }
                     
+                    addLogMessage(`${event.userName} updated document content (Version ${event.version})`, 'edit');
                     editor.setSelectionRange(cursorPos, cursorPos);
                 });
                 
-                // Listen untuk cursor moved
                 channel.listen('.cursor.moved', (event) => {
-                    console.log('Cursor moved:', event);
                     if (event.userId !== userId) {
                         addLogMessage(`🖱️ ${event.userName} cursor at position ${event.position}`, 'cursor');
                     }
                 });
                 
-                // Listen untuk user presence (join/leave)
                 channel.listen('.user.presence', (event) => {
                     console.log('User presence:', event);
                     
@@ -164,6 +114,13 @@
                             activeUsers.push(event.userName);
                             updateActiveUsersUI();
                             addLogMessage(`${event.userName} joined the document`, 'info');
+                            
+                            // Simpan ke daftar semua user
+                            let allUsers = JSON.parse(localStorage.getItem(`doc_${docId}_all_users`) || '[]');
+                            if (!allUsers.includes(event.userName)) {
+                                allUsers.push(event.userName);
+                                localStorage.setItem(`doc_${docId}_all_users`, JSON.stringify(allUsers));
+                            }
                         }
                     } else if (event.action === 'leave' && event.userName !== userName) {
                         activeUsers = activeUsers.filter(function(u) { return u !== event.userName; });
@@ -172,44 +129,96 @@
                     }
                 });
                 
-                // Broadcast user join
                 broadcastPresence('join');
-                
-                addLogMessage('✅ WebSocket connected successfully! Real-time collaboration active.', 'info');
-                addLogMessage('💡 Tip: Jika ada konflik, Anda akan diminta memilih versi mana yang disimpan.', 'info');
+                addLogMessage('✅ WebSocket connected!', 'info');
             } else {
-                console.warn('Echo not loaded yet, retrying in 1 second...');
                 setTimeout(initWebSocket, 1000);
             }
         }
         
-        // Broadcast cursor position
         function broadcastCursor(position) {
             if (channel) {
                 axios.post('/broadcast/cursor', {
-                    documentId: docId,
-                    userId: userId,
-                    userName: userName,
-                    position: position
-                }).catch(function(err) { console.error('Cursor broadcast error:', err); });
+                    documentId: docId, userId: userId, userName: userName, position: position
+                }).catch(function(err) { console.error('Cursor error:', err); });
             }
         }
         
-        // Broadcast user presence
         function broadcastPresence(action) {
             if (channel) {
                 axios.post('/broadcast/presence', {
-                    documentId: docId,
-                    userId: userId,
-                    userName: userName,
-                    action: action
-                }).catch(function(err) { console.error('Presence broadcast error:', err); });
+                    documentId: docId, userId: userId, userName: userName, action: action
+                }).catch(function(err) { console.error('Presence error:', err); });
             }
+            
+            // Update daftar user di localStorage
+            if (action === 'join') {
+                setTimeout(updateAllUsersList, 500);
+            }
+        }
+        
+        // ========== SIMULASI KONFLIK OTOMATIS ==========
+        let conflictSimulationInterval = null;
+        
+        function startConflictSimulation() {
+            if (conflictSimulationInterval) clearInterval(conflictSimulationInterval);
+            
+            conflictSimulationInterval = setInterval(function() {
+                // Ambil semua user yang pernah terdeteksi dari localStorage
+                let allKnownUsers = JSON.parse(localStorage.getItem(`doc_${docId}_all_users`) || '[]');
+                
+                // Filter untuk mendapatkan user selain diri sendiri
+                let otherUsers = allKnownUsers.filter(function(u) { 
+                    return u !== userName; 
+                });
+                
+                if (otherUsers.length > 0) {
+                    // Pilih random user lain
+                    let conflictUser = otherUsers[Math.floor(Math.random() * otherUsers.length)];
+                    addLogMessage(`⚠️ CONFLICT DETECTED: ${conflictUser} might have edited the same area!`, 'conflict');
+                    console.log(`[CONFLICT] ${userName} detected conflict from: ${conflictUser}`);
+                } else {
+                    // Jika belum ada user lain, gunakan pesan generic
+                    addLogMessage(`⚠️ CONFLICT DETECTED: Another user might have edited the same area!`, 'conflict');
+                }
+            }, 15000);
+        }
+        
+        function stopConflictSimulation() {
+            if (conflictSimulationInterval) {
+                clearInterval(conflictSimulationInterval);
+                conflictSimulationInterval = null;
+            }
+        }
+        
+        // Update daftar semua user ke localStorage
+        function updateAllUsersList() {
+            let allUsers = JSON.parse(localStorage.getItem(`doc_${docId}_all_users`) || '[]');
+            
+            // Tambahkan user saat ini jika belum ada
+            if (!allUsers.includes(userName)) {
+                allUsers.push(userName);
+                localStorage.setItem(`doc_${docId}_all_users`, JSON.stringify(allUsers));
+            }
+            
+            // Tambahkan semua active users
+            activeUsers.forEach(function(u) {
+                if (!allUsers.includes(u)) {
+                    allUsers.push(u);
+                    localStorage.setItem(`doc_${docId}_all_users`, JSON.stringify(allUsers));
+                }
+            });
+        }
+        
+        // Hapus user dari daftar (opsional)
+        function removeUserFromList(userToRemove) {
+            let allUsers = JSON.parse(localStorage.getItem(`doc_${docId}_all_users`) || '[]');
+            allUsers = allUsers.filter(function(u) { return u !== userToRemove; });
+            localStorage.setItem(`doc_${docId}_all_users`, JSON.stringify(allUsers));
         }
         
         // ========== FUNGSI UTAMA ==========
         
-        // Update active users UI
         function updateActiveUsersUI() {
             var list = document.getElementById('activeUsersList');
             list.innerHTML = '';
@@ -226,7 +235,6 @@
             });
         }
         
-        // Add log message
         function addLogMessage(message, type) {
             type = type || 'edit';
             var logDiv = document.getElementById('conflictLog');
@@ -247,7 +255,6 @@
             }
         }
         
-        // Save version to server (dengan WebSocket broadcast)
         async function saveVersion(content, isManual) {
             isManual = isManual || false;
             try {
@@ -257,11 +264,7 @@
                         'Content-Type': 'application/json',
                         'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
                     },
-                    body: JSON.stringify({ 
-                        content: content,
-                        userId: userId,
-                        userName: userName
-                    })
+                    body: JSON.stringify({ content: content, userId: userId, userName: userName })
                 });
                 
                 const data = await response.json();
@@ -272,13 +275,11 @@
                     return true;
                 }
             } catch (error) {
-                console.error('Save error:', error);
                 addLogMessage('❌ Failed to save: ' + error.message, 'conflict');
                 return false;
             }
         }
         
-        // Manual save
         async function manualSave() {
             var currentContent = document.getElementById('editor').value;
             var statusSpan = document.getElementById('saveStatus');
@@ -297,7 +298,6 @@
             }
         }
         
-        // Auto-save
         function startAutoSave() {
             if (autoSaveTimer) clearInterval(autoSaveTimer);
             autoSaveTimer = setInterval(async function() {
@@ -311,8 +311,6 @@
         
         // ========== EVENT LISTENERS ==========
         var editor = document.getElementById('editor');
-        
-        // Track local edits
         var lastContent = editor.value;
         
         editor.addEventListener('input', function(e) {
@@ -325,19 +323,13 @@
             lastContent = newContent;
         });
         
-        // Track typing time untuk deteksi konflik
-        editor.addEventListener('keydown', function() {
-            lastTypingTime = Date.now();
-        });
-        
-        // Track cursor position
         editor.addEventListener('mouseup', function() { broadcastCursor(editor.selectionStart); });
         editor.addEventListener('keyup', function() { broadcastCursor(editor.selectionStart); });
         editor.addEventListener('click', function() { broadcastCursor(editor.selectionStart); });
         
-        // Clean up on page unload
         window.addEventListener('beforeunload', function() {
             broadcastPresence('leave');
+            stopConflictSimulation();
         });
         
         // ========== INITIALIZATION ==========
@@ -345,7 +337,10 @@
             updateActiveUsersUI();
             startAutoSave();
             initWebSocket();
+            updateAllUsersList();
+            startConflictSimulation();
             addLogMessage(userName + ' joined the document', 'info');
+            addLogMessage('💡 Simulasi konflik akan muncul setiap 15 detik.', 'info');
         }
         
         init();

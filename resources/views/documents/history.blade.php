@@ -16,23 +16,32 @@
         <a href="{{ route('documents.index') }}" class="text-green-500">← Back to Documents</a>
         
         <div class="mt-6 space-y-4">
-            @foreach($versions->reverse() as $ver)
+            @forelse($versions as $ver)
             <div class="border p-4 rounded shadow-sm">
                 <div class="flex justify-between items-center">
-                    <h3 class="text-lg font-semibold">Version {{ $ver->version }}</h3>
-                    <span class="text-sm text-gray-500">{{ $ver->created_at->diffForHumans() ?? 'Just now' }}</span>
+                    <h3 class="text-lg font-semibold">Version {{ $ver['version'] }}</h3>
+                    <span class="text-sm text-gray-500">{{ \Carbon\Carbon::parse($ver['created_at'])->diffForHumans() }}</span>
                 </div>
-                <p class="text-sm text-gray-600 mt-1">Created by: {{ $ver->user_name ?? 'Unknown' }}</p>
+                <p class="text-sm text-gray-600 mt-1">
+                    <strong>Dibuat oleh:</strong> {{ $ver['user_name'] ?? 'System' }}
+                </p>
                 <div class="mt-2 p-2 bg-gray-50 rounded text-sm">
                     <strong>Content preview:</strong>
-                    <p class="mt-1">{{ Str::limit($ver->content, 200) }}</p>
+                    <p class="mt-1">{{ Str::limit($ver['content'], 200) }}</p>
                 </div>
             </div>
-            @endforeach
+            @empty
+                <div class="border p-4 rounded shadow-sm">
+                    <p class="text-gray-500 text-center">No version history available yet.</p>
+                    <p class="text-gray-400 text-center text-sm mt-2">Versions will appear when users save the document.</p>
+                </div>
+            @endforelse
         </div>
         
-        @if($versions->isEmpty())
-            <p class="text-gray-500 text-center mt-8">No version history available.</p>
+        @if(!empty($versions))
+        <div class="mt-4 text-sm text-gray-500 text-center">
+            Total versions: {{ count($versions) }}
+        </div>
         @endif
     </div>
 </body>
