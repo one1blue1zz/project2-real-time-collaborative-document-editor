@@ -3,164 +3,87 @@
 namespace App\Http\Controllers;
 
 use App\Models\Document;
-use App\Models\DocumentVersion;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
-
+use Illuminate\Http\JsonResponse;
+use App\Events\DocumentContentUpdate;
+use App\Events\UserPresence;
 
 class DocumentController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
     public function index()
     {
-        $documents = Document::orderBy('updated_at', 'desc')->get();
+        $documents = Document::latest()->get();
         return view('documents.index', compact('documents'));
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
     public function create()
     {
         return view('documents.create');
     }
 
-    /**
-     * Store a newly created resource in storage.
-     */
     public function store(Request $request)
-    {
-        $request->validate([
-            'title' => 'required|string|max:255',
-            'content' => 'nullable|string'
-        ]);
-
-        $document = Document::create([
-            'title' => $request->title,
-            'content' => $request->content ?? '',
-            'current_version' => 1
-        ]);
-
-        DocumentVersion::create([
-            'document_id' => $document->id,
-            'content' => $document->content,
-            'version' => $document->current_version,
-            'user_id' => Auth::id(),
-            'user_name' => 'User_' . substr((string) Auth::id(), 0, 8),
-            'changes' => ['action' => 'created']
-        ]);
-
-        return redirect()->route('documents.edit', $document)
-            ->with('success', 'Document created successfully!');
-    }
-
-    /**
-     * Display the specified resource.
-     */
-    public function show(Document $document)
-    {
-        //
-    }
-
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(Document $document)
-    {
-        $versions = $document->versions()->orderBy('version', 'desc')->get();
-        return view('documents.edit', compact('document', 'versions'));
-    }
-
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, Document $document)
     {
         $request->validate([
             'title' => 'required|string|max:255',
             'content' => 'nullable|string',
         ]);
 
-        if ($document->isLocked() && $document->locked_by !== session()->getId()) {
-            return response()->json([
-                'error' => 'Document is being editted by another user',
-                'locked_by' => $document->locked_by
-            ], 423);
-        }
-
-        $oldContent = $document->content;
-
-        $document->update([
+        Document::create([
             'title' => $request->title,
-            'content' => $request->content,
-            'current_version' => $document->current_version + 1
+            'content' => $request->content ?? '',
+            'current_version' => 1,
+            'status' => 'available',
         ]);
 
-        DocumentVersion::create([
-            'document_id' => $document->id,
+        return redirect()->route('documents.index')->with('success', 'Dokumen berhasil dibuat!');
+    }
+
+    public function edit(int $id)
+    {
+        $document = Document::findOrFail($id);
+        return view('documents.edit', compact('document'));
+    }
+
+    public function update(Request $request, int $id): JsonResponse
+    {
+        $document = Document::findOrFail($id);
+        
+        $document->update([
             'content' => $request->content,
-            'version' => $document->version,
-            'user_id' => session()->getId(),
-            'user_name' => 'User_' . substr(session()->getId(), 0, 8),
-            'changes' => $this->computeChanges($oldContent, $request->content)
+            'current_version' => $document->current_version + 1,
         ]);
 
-        return redirect()->route('documents.index')
-            ->with('success', 'Document updated successfully!');
+        // Broadcast ke semua user yang sedang mengedit dokumen ini
+        broadcast(new DocumentContentUpdate(
+            $document->toArray(),
+            $request->content,
+            $request->userId,
+            $request->userName
+        ));
+
+        return response()->json(['success' => true, 'version' => $document->current_version]);
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(Document $document)
+    public function history(int $id)
     {
-       $document->delete();
-       return redirect()->route('documents.index')
-            ->with('success', 'Document deleted successfully!');
-    }
-
-    public function history(Document $document)
-    {
-        $versions = $document->versions()->orderBy('version', 'desc')->get();
+        $document = Document::findOrFail($id);
+        
+        $versions = collect([]);
+        for ($i = 1; $i <= $document->current_version; $i++) {
+            $versions->push((object)[
+                'version' => $i,
+                'content' => $i == $document->current_version ? $document->content : 'Konten versi ' . $i,
+                'created_at' => $document->created_at,
+                'user_name' => 'System',
+            ]);
+        }
+        
         return view('documents.history', compact('document', 'versions'));
     }
 
-    public function restoreVersion(Document $document, int $version)
+    public function destroy(int $id)
     {
-        $versionRecord = $document->versions()->where('version', $version)->firstOrFail();
-
-        $document->update([
-            'content' => $versionRecord->content,
-            'current_version' => $document->current_version + 1
-        ]);
-
-        DocumentVersion::create([
-            'document_id' => $document->id,
-            'content' => $versionRecord->content,
-            'version' => $document->current_version,
-            'user_id' => session()->getId(),
-            'user_name' => 'User_' . substr(session()->getId(), 0, 8),
-            'changes' => ['action' => 'restored', 'from_version' => $version]
-        ]);
-
-        return redirect()->route('documents.edit', $document)
-            ->with('success', "Restored to version ($version)");
-    }
-
-    private function computeChanges(?string $old, ?string $new)
-    {
-        if ($old === $new) return ['action' => 'no_changes'];
-
-        $oldWords = str_word_count($old, 1);
-        $newWords = str_word_count($new, 1);
-
-        return [
-            'action' => 'edited',
-            'old_length' => strlen($old),
-            'new_length' => strlen($new) - strlen($old),
-            'difference' => strlen($new) - strlen($old),
-        ];
+        Document::findOrFail($id)->delete();
+        return redirect()->route('documents.index')->with('success', 'Dokumen berhasil dihapus!');
     }
 }

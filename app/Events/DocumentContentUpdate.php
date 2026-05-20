@@ -8,30 +8,30 @@ use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
 
-class CursorMoved implements ShouldBroadcast
+class DocumentContentUpdate implements ShouldBroadcast
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
-    public string $documentId;
+    public array $document;
+    public string $content;
     public string $userId;
     public string $userName;
-    public int $position;
 
-    public function __construct(string $documentId, string $userId, string $userName, int $position)
+    public function __construct(array $document, string $content, string $userId, string $userName)
     {
-        $this->documentId = $documentId;
+        $this->document = $document;
+        $this->content = $content;
         $this->userId = $userId;
         $this->userName = $userName;
-        $this->position = $position;
     }
 
     public function broadcastOn(): Channel
     {
-        return new Channel('document.' . $this->documentId);
+        return new Channel('document.' . $this->document['id']);
     }
 
     public function broadcastAs(): string
     {
-        return 'cursor.moved';
+        return 'content.update';
     }
 }

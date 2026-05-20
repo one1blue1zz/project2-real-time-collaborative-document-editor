@@ -8,21 +8,21 @@ use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
 
-class CursorMoved implements ShouldBroadcast
+class UserPresence implements ShouldBroadcast
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
     public string $documentId;
     public string $userId;
     public string $userName;
-    public int $position;
+    public string $action;
 
-    public function __construct(string $documentId, string $userId, string $userName, int $position)
+    public function __construct(string $documentId, string $userId, string $userName, string $action)
     {
         $this->documentId = $documentId;
         $this->userId = $userId;
         $this->userName = $userName;
-        $this->position = $position;
+        $this->action = $action;
     }
 
     public function broadcastOn(): Channel
@@ -32,6 +32,6 @@ class CursorMoved implements ShouldBroadcast
 
     public function broadcastAs(): string
     {
-        return 'cursor.moved';
+        return 'user.presence';
     }
 }
